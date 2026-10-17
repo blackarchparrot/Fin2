@@ -1,0 +1,6 @@
+{
+  "name": "FinPilot AI",
+  "description": "Zero-cost AI financial copilot & autonomous agent with Plan-Act-Verify-Recover guardrails and human approval.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
