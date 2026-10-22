@@ -4,8 +4,93 @@ import {
   AgentPlanStep,
   FinancialProfile,
   ProposedAction,
+  SurvivalMetrics,
+  TransactionCategory,
   ValidationRuleCheck,
 } from '../types/finance';
+
+/**
+ * Categorizes categories into essential vs discretionary.
+ */
+export const ESSENTIAL_CATEGORIES: TransactionCategory[] = [
+  'Housing & Rent',
+  'Groceries & Dining',
+  'Utilities & Internet',
+  'Health & Wellness',
+];
+
+export const DISCRETIONARY_CATEGORIES: TransactionCategory[] = [
+  'Software & Subscriptions',
+  'Entertainment',
+  'Transport & Travel',
+  'Other',
+];
+
+/**
+ * Computes exact daily burn rates and survival days under multiple stress-test scenarios.
+ */
+export function calculateSurvivalMetrics(profile: FinancialProfile): SurvivalMetrics {
+  const daysInMonth = 30.417; // Average days per month
+
+  const totalAllocated = profile.budgets.reduce((acc, b) => acc + b.allocated, 0);
+
+  // Essential vs discretionary monthly allocations / spend
+  let essentialMonthly = 0;
+  let discretionaryMonthly = 0;
+
+  profile.budgets.forEach((b) => {
+    if (ESSENTIAL_CATEGORIES.includes(b.category)) {
+      essentialMonthly += b.spent > 0 ? b.spent : b.allocated;
+    } else {
+      discretionaryMonthly += b.spent > 0 ? b.spent : b.allocated;
+    }
+  });
+
+  // Fallbacks if budgets are empty
+  if (essentialMonthly === 0 && profile.monthlyExpense > 0) {
+    essentialMonthly = profile.monthlyExpense * 0.65;
+    discretionaryMonthly = profile.monthlyExpense * 0.35;
+  }
+
+  const dailyBurnActual = Math.max(1, profile.monthlyExpense / daysInMonth);
+  const dailyBurnBudget = Math.max(1, (totalAllocated > 0 ? totalAllocated : profile.monthlyExpense) / daysInMonth);
+  const dailyEssentialBurn = Math.max(1, essentialMonthly / daysInMonth);
+  const dailyDiscretionaryBurn = Math.max(0, discretionaryMonthly / daysInMonth);
+
+  // Survival Days assuming ZERO INCOME (e.g. Sudden Job Loss / Revenue Stoppage)
+  const survivalDaysActual = Math.floor(profile.totalBalance / dailyBurnActual);
+  const survivalDaysBudget = Math.floor(profile.totalBalance / dailyBurnBudget);
+  const survivalDaysEssentialOnly = Math.floor(profile.totalBalance / dailyEssentialBurn);
+
+  const netMonthlySurplus = profile.monthlyIncome - profile.monthlyExpense;
+  const sustainableWithIncome = netMonthlySurplus >= 0;
+
+  let survivalStatus: 'CRITICAL' | 'CAUTION' | 'STABLE' | 'SECURE';
+  if (survivalDaysActual < 60) {
+    survivalStatus = 'CRITICAL';
+  } else if (survivalDaysActual < 120) {
+    survivalStatus = 'CAUTION';
+  } else if (survivalDaysActual < 180) {
+    survivalStatus = 'STABLE';
+  } else {
+    survivalStatus = 'SECURE';
+  }
+
+  return {
+    dailyBurnActual: Number(dailyBurnActual.toFixed(2)),
+    dailyBurnBudget: Number(dailyBurnBudget.toFixed(2)),
+    dailyEssentialBurn: Number(dailyEssentialBurn.toFixed(2)),
+    dailyDiscretionaryBurn: Number(dailyDiscretionaryBurn.toFixed(2)),
+    survivalDaysActual,
+    survivalDaysBudget,
+    survivalDaysEssentialOnly,
+    essentialMonthlyExpense: Number(essentialMonthly.toFixed(2)),
+    discretionaryMonthlyExpense: Number(discretionaryMonthly.toFixed(2)),
+    survivalStatus,
+    sustainableWithIncome,
+    netMonthlySurplus: Number(netMonthlySurplus.toFixed(2)),
+  };
+}
 
 /**
  * Validates a proposed action against strict safety guardrails.
@@ -37,6 +122,57 @@ export function validateAction(
   });
 
   switch (type) {
+    case 'ACTIVATE_SURVIVAL_BUDGET': {
+      const daysGained = payload.projectedDaysGained ?? 0;
+      const trims = payload.trimmedCategories || [];
+
+      checks.push({
+        ruleName: 'Runway Extension Positive Impact',
+        passed: daysGained > 0,
+        message:
+          daysGained > 0
+            ? `Extends survival runway by +${daysGained} days under zero-income conditions.`
+            : 'Plan must produce a measurable positive runway extension.',
+      });
+
+      const touchedEssential = trims.some((t) =>
+        ['Housing & Rent', 'Utilities & Internet', 'Health & Wellness'].includes(t.category)
+      );
+      checks.push({
+        ruleName: 'Essential Needs Protection',
+        passed: !touchedEssential,
+        message: !touchedEssential
+          ? 'Critical shelter, utilities, and healthcare allocations left 100% protected.'
+          : 'Warning: Survival plan cannot unsafely defund essential housing or healthcare.',
+      });
+
+      checks.push({
+        ruleName: 'Discretionary Trim Ceiling',
+        passed: trims.length > 0 && trims.every((t) => t.newAmount >= 0),
+        message: 'All adjusted discretionary categories maintain non-negative spending ceilings.',
+      });
+      break;
+    }
+
+    case 'EXTEND_RUNWAY_PLAN':
+    case 'OPTIMIZE_DAILY_BURN': {
+      const metrics = calculateSurvivalMetrics(profile);
+      const targetDays = payload.targetSurvivalDays ?? 180;
+
+      checks.push({
+        ruleName: 'Target Runway Feasibility',
+        passed: targetDays > metrics.survivalDaysActual,
+        message: `Target of ${targetDays} days is higher than current ${metrics.survivalDaysActual} days.`,
+      });
+
+      checks.push({
+        ruleName: 'Essential Daily Burn Floor',
+        passed: profile.totalBalance > 0,
+        message: `Available liquid assets ($${profile.totalBalance.toLocaleString()}) support burn adjustment.`,
+      });
+      break;
+    }
+
     case 'REALLOCATE_BUDGET': {
       const amount = payload.amount ?? 0;
       const source = payload.sourceCategory;
@@ -56,7 +192,6 @@ export function validateAction(
 
       const sourceBudget = profile.budgets.find((b) => b.category === source);
       if (sourceBudget) {
-        const remainingInSource = sourceBudget.allocated - sourceBudget.spent;
         const leavesExcessDeficit = sourceBudget.allocated - amount < sourceBudget.spent;
         checks.push({
           ruleName: 'Source Category Solvency',
@@ -173,15 +308,15 @@ export function generatePlanWorkflow(
     {
       stepNumber: 1,
       phase: 'PLAN',
-      title: 'Analyze Ledger & Formulate Plan',
-      detail: `Evaluated current balances, cashflow velocity, and category allocations. Identified recommendation: ${title}.`,
+      title: 'Analyze Financial Cost Invariants & Burn',
+      detail: `Evaluated liquid balance, daily burn velocity, and essential vs discretionary commitments. Identified strategy: ${title}.`,
       status: 'COMPLETED',
     },
     {
       stepNumber: 2,
       phase: 'ACT',
       title: 'Synthesize Safe Proposed Action',
-      detail: `Built structured action payload (${actionType}). Checked synthetic constraints against simulated state.`,
+      detail: `Built structured action payload (${actionType}). Checked constraints against simulated state.`,
       status: 'COMPLETED',
     },
     {
@@ -203,21 +338,92 @@ export function generatePlanWorkflow(
 
 /**
  * Deterministic FinPilot Rule-Based Agent Generator (Zero-Cost / Fallback / Demo Mode)
- * Ensures 100% functionality without requiring external API keys.
+ * Highly intelligent financial copilot responding to runway, survival days, budget rebalancing, and goals.
  */
 export function generateDeterministicPlan(
   profile: FinancialProfile,
   userPrompt: string
 ): { proposedAction: ProposedAction; planSteps: AgentPlanStep[]; rationale: string } {
   const promptLower = userPrompt.toLowerCase();
+  const metrics = calculateSurvivalMetrics(profile);
 
-  // Scenario A: Savings / Goal allocation
+  // Scenario 1: Survival Mode / Runway Extension / Job Loss / Daily Burn Rate
+  if (
+    promptLower.includes('surviv') ||
+    promptLower.includes('burn') ||
+    promptLower.includes('runway') ||
+    promptLower.includes('days') ||
+    promptLower.includes('job loss') ||
+    promptLower.includes('income shock') ||
+    promptLower.includes('emergency cut')
+  ) {
+    // Calculate survival budget trims across discretionary categories
+    const trims: { category: TransactionCategory; previousAmount: number; newAmount: number }[] = [];
+    let totalMonthlySaved = 0;
+
+    profile.budgets.forEach((b) => {
+      if (b.category === 'Entertainment') {
+        const trim = Math.round(b.allocated * 0.5);
+        trims.push({ category: b.category, previousAmount: b.allocated, newAmount: b.allocated - trim });
+        totalMonthlySaved += trim;
+      } else if (b.category === 'Software & Subscriptions') {
+        const trim = Math.round(b.allocated * 0.35);
+        trims.push({ category: b.category, previousAmount: b.allocated, newAmount: b.allocated - trim });
+        totalMonthlySaved += trim;
+      } else if (b.category === 'Transport & Travel') {
+        const trim = Math.round(b.allocated * 0.3);
+        trims.push({ category: b.category, previousAmount: b.allocated, newAmount: b.allocated - trim });
+        totalMonthlySaved += trim;
+      }
+    });
+
+    const newMonthlyExpense = Math.max(1, profile.monthlyExpense - totalMonthlySaved);
+    const newDailyBurn = newMonthlyExpense / 30.417;
+    const newSurvivalDays = Math.floor(profile.totalBalance / newDailyBurn);
+    const daysGained = Math.max(1, newSurvivalDays - metrics.survivalDaysActual);
+
+    const payload: ActionPayload = {
+      amount: totalMonthlySaved,
+      targetSurvivalDays: newSurvivalDays,
+      projectedDaysGained: daysGained,
+      trimmedCategories: trims,
+      reason: `Activate Emergency Survival Mode: Reduce discretionary overhead by $${totalMonthlySaved}/mo to extend zero-income runway from ${metrics.survivalDaysActual} days to ${newSurvivalDays} days (+${daysGained} days).`,
+    };
+
+    const rules = validateAction(profile, 'ACTIVATE_SURVIVAL_BUDGET', payload);
+    const allPassed = rules.every((r) => r.passed);
+
+    const title = `Activate Survival Mode Budget (+${daysGained} Days Runway)`;
+    const expectedEffect = `Reduces daily burn from $${metrics.dailyBurnActual.toFixed(2)}/day to $${newDailyBurn.toFixed(2)}/day (saves $${totalMonthlySaved.toLocaleString()}/mo). Under zero income, your liquid cash ($${profile.totalBalance.toLocaleString()}) survives for ${newSurvivalDays} days instead of ${metrics.survivalDaysActual} days.`;
+
+    const proposedAction: ProposedAction = {
+      id: `act-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      type: 'ACTIVATE_SURVIVAL_BUDGET',
+      title,
+      description: `Temporarily compress non-essential entertainment, software, and travel spending to guarantee survival longevity.`,
+      expectedEffect,
+      payload,
+      validationRules: rules,
+      allRulesPassed: allPassed,
+      riskLevel: 'LOW',
+      status: 'PROPOSED',
+    };
+
+    return {
+      proposedAction,
+      planSteps: generatePlanWorkflow('ACTIVATE_SURVIVAL_BUDGET', title, expectedEffect),
+      rationale: `FinPilot analyzed your daily burn of $${metrics.dailyBurnActual.toFixed(2)}/day against your $${profile.totalBalance.toLocaleString()} liquid balance. Currently, you have ${metrics.survivalDaysActual} days of survival runway under zero income. Compressing discretionary categories frees $${totalMonthlySaved}/mo, expanding survival to ${newSurvivalDays} days (+${daysGained} days gained) while protecting essential housing, food, and healthcare.`,
+    };
+  }
+
+  // Scenario 2: Savings / Emergency Fund Contribution
   if (
     promptLower.includes('saving') ||
     promptLower.includes('emergency') ||
     promptLower.includes('transfer') ||
     promptLower.includes('contribute') ||
-    promptLower.includes('runway')
+    promptLower.includes('goal')
   ) {
     const goal = profile.savingsGoals[0] || {
       id: 'goal-emergency',
@@ -257,11 +463,11 @@ export function generateDeterministicPlan(
     return {
       proposedAction,
       planSteps: generatePlanWorkflow('ALLOCATE_SAVINGS', title, expectedEffect),
-      rationale: `FinPilot analyzed your balance of $${profile.totalBalance.toLocaleString()} and monthly surplus. Allocating $${transferAmount.toLocaleString()} safely accelerates your ${goal.name} while maintaining adequate operating liquidity.`,
+      rationale: `FinPilot analyzed your balance of $${profile.totalBalance.toLocaleString()} and monthly surplus of $${metrics.netMonthlySurplus.toLocaleString()}. Allocating $${transferAmount.toLocaleString()} safely accelerates your ${goal.name} while maintaining adequate operating liquidity (${metrics.survivalDaysActual} days remaining).`,
     };
   }
 
-  // Scenario B: Budget rebalancing
+  // Scenario 3: Budget rebalancing
   if (
     promptLower.includes('budget') ||
     promptLower.includes('rebalance') ||
@@ -308,7 +514,7 @@ export function generateDeterministicPlan(
     };
   }
 
-  // Scenario C: Subscription audit or cancellation
+  // Scenario 4: Subscription audit or cancellation
   if (
     promptLower.includes('sub') ||
     promptLower.includes('cancel') ||
@@ -327,8 +533,11 @@ export function generateDeterministicPlan(
     const rules = validateAction(profile, 'CANCEL_SUBSCRIPTION_ALERT', payload);
     const allPassed = rules.every((r) => r.passed);
 
-    const title = `Flag & Simulate Cancellation of "${subTx.description}" ($${subTx.amount}/mo)`;
-    const expectedEffect = `Removes $${subTx.amount}/mo in recurring monthly liabilities. Projected annual savings: $${(subTx.amount * 12).toLocaleString()}.`;
+    const annualSaved = subTx.amount * 12;
+    const daysGained = Math.round((annualSaved / 12) / metrics.dailyBurnActual * 30);
+
+    const title = `Cancel Recurring "${subTx.description}" ($${subTx.amount}/mo)`;
+    const expectedEffect = `Eliminates $${subTx.amount}/mo in fixed commitments ($${annualSaved.toLocaleString()}/yr). Extends annual cash runway by approximately +${Math.max(1, daysGained)} days.`;
 
     const proposedAction: ProposedAction = {
       id: `act-${Date.now()}`,
@@ -347,7 +556,7 @@ export function generateDeterministicPlan(
     return {
       proposedAction,
       planSteps: generatePlanWorkflow('CANCEL_SUBSCRIPTION_ALERT', title, expectedEffect),
-      rationale: `Recurring charge "${subTx.description}" ($${subTx.amount}) flagged during financial audit. Simulated cancellation will immediately recover monthly operating margin.`,
+      rationale: `Recurring charge "${subTx.description}" ($${subTx.amount}/mo) audited. Simulated cancellation immediately lowers daily burn by $${(subTx.amount / 30.417).toFixed(2)}/day.`,
     };
   }
 
@@ -359,14 +568,14 @@ export function generateDeterministicPlan(
     goalId: defaultGoal.id,
     goalName: defaultGoal.name,
     amount: safeAmount,
-    reason: `FinPilot general copilot recommendation based on liquidity audit.`,
+    reason: `FinPilot general copilot recommendation based on liquidity audit (${metrics.survivalDaysActual} days survival cushion).`,
   };
 
   const rules = validateAction(profile, 'ALLOCATE_SAVINGS', payload);
   const allPassed = rules.every((r) => r.passed);
 
   const title = `Strategic Reserve Boost: Allocate $${safeAmount} to ${defaultGoal.name}`;
-  const expectedEffect = `Strengthens ${defaultGoal.name} by +$${safeAmount}. Safeguards cash reserves without impacting active bills.`;
+  const expectedEffect = `Strengthens ${defaultGoal.name} by +$${safeAmount}. Preserves current survival longevity of ${metrics.survivalDaysActual} days.`;
 
   const proposedAction: ProposedAction = {
     id: `act-${Date.now()}`,
@@ -385,7 +594,7 @@ export function generateDeterministicPlan(
   return {
     proposedAction,
     planSteps: generatePlanWorkflow('ALLOCATE_SAVINGS', title, expectedEffect),
-    rationale: `FinPilot reviewed your portfolio status. Cash reserves are healthy, and directing $${safeAmount} toward your top-priority goal reinforces long-term resilience.`,
+    rationale: `FinPilot reviewed your portfolio status. Cash reserves are healthy with ${metrics.survivalDaysActual} days of zero-income runway. Directing $${safeAmount} toward your top-priority goal reinforces long-term resilience without raising your daily burn rate.`,
   };
 }
 
@@ -413,6 +622,36 @@ export function executeSimulatedAction(
   const updated: FinancialProfile = JSON.parse(JSON.stringify(profile));
 
   switch (action.type) {
+    case 'ACTIVATE_SURVIVAL_BUDGET': {
+      const trims = action.payload.trimmedCategories || [];
+      let totalCut = 0;
+
+      trims.forEach((t) => {
+        const b = updated.budgets.find((item) => item.category === t.category);
+        if (b) {
+          totalCut += Math.max(0, b.allocated - t.newAmount);
+          b.allocated = t.newAmount;
+        }
+      });
+
+      if (totalCut > 0) {
+        updated.monthlyExpense = Math.max(1, updated.monthlyExpense - totalCut);
+      }
+
+      // Add simulated ledger audit transaction
+      updated.transactions.unshift({
+        id: `tx-sim-${Date.now()}`,
+        date: new Date().toISOString().split('T')[0],
+        description: `Emergency Survival Plan: Reduced Discretionary Burn (-$${totalCut}/mo)`,
+        amount: totalCut,
+        type: 'income',
+        category: 'Other',
+        status: 'cleared',
+        notes: `Executed via FinPilot AI Agent (+${action.payload.projectedDaysGained || 0} Survival Days Gained)`,
+      });
+      break;
+    }
+
     case 'ALLOCATE_SAVINGS': {
       const amount = action.payload.amount || 0;
       const goalIndex = updated.savingsGoals.findIndex((g) => g.id === action.payload.goalId);
@@ -483,7 +722,6 @@ export function executeSimulatedAction(
   }
 
   // Recalculate derived metrics
-  const totalAllocatedBudget = updated.budgets.reduce((acc, b) => acc + b.allocated, 0);
   updated.savingsRate = updated.monthlyIncome > 0
     ? Math.max(0, Number((((updated.monthlyIncome - updated.monthlyExpense) / updated.monthlyIncome) * 100).toFixed(1)))
     : 0;
@@ -491,6 +729,8 @@ export function executeSimulatedAction(
   updated.emergencyFundMonths = updated.monthlyExpense > 0
     ? Number((updated.totalBalance / updated.monthlyExpense).toFixed(1))
     : 12;
+
+  updated.survivalMetrics = calculateSurvivalMetrics(updated);
 
   return {
     updatedProfile: updated,

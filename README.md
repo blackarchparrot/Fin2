@@ -16,17 +16,23 @@ FinPilot AI is a competition-ready, zero-cost AI financial copilot engineered fo
 
 ## Core Capabilities
 
-1. **FinTech Dashboard**:
+1. **FinTech Dashboard & Theme Customization**:
    - Liquid cash balance, monthly inflow, monthly burn, net cashflow, and emergency runway calculation.
+   - **Sun / Moon Theme Switcher**: 1-click toggle between dark and light themes, persisted in localStorage.
    - Interactive category budget allocation with real-time solvency guards.
    - Savings goals tracking with progress percentages, target deadlines, and shortfall calculations.
    - Transaction ledger with search, multi-category filters, and 1-click copilot queries.
-2. **Safe Autonomous Agent (Plan → Act → Verify → Recover)**:
-   - **Plan**: Evaluates financial portfolio state and formulates a reasoned optimization strategy.
-   - **Act**: Synthesizes a structured Proposed Action and checks server-side invariant rules.
+2. **Cash Runway & Survival Days Engine**:
+   - **Actual Pacing Survival Days**: Computes exact days user can survive with current liquid balance under zero income ($/day burn).
+   - **Budget Ceiling Survival Days**: Models survival if 100% of budgeted allocations are exhausted.
+   - **Survival Mode (Essential-Only)**: Calculates extended survival if discretionary spending is frozen, leaving housing, utilities, groceries, and healthcare 100% protected.
+   - **Interactive Stress-Test Simulator**: Real-time sliders simulating sudden income shocks (0% to -100%) and discretionary trims with instant days-gained feedback.
+3. **Smarter Autonomous Agent (Plan → Act → Verify → Recover)**:
+   - **Plan**: Evaluates financial portfolio state, daily burn velocity, and survival days to formulate reasoned optimization strategies.
+   - **Act**: Synthesizes structured Proposed Actions (`ACTIVATE_SURVIVAL_BUDGET`, `REALLOCATE_BUDGET`, `ALLOCATE_SAVINGS`, `CANCEL_SUBSCRIPTION_ALERT`) and checks server-side invariant rules.
    - **Verify (Human-in-the-Loop)**: Renders a dedicated Proposed-Action Review screen detailing the intended action, expected effect, and invariant checks. Consequential mutations are blocked until the user explicitly clicks "Approve".
-   - **Recover**: If an action is rejected by the user or violates an invariant (e.g. overdraft, duplicate category shift), it safely aborts and logs the explanation in the immutable audit trail.
-3. **Safety Invariants**:
+   - **Recover**: If an action is rejected by the user or violates an invariant, it safely aborts and logs the explanation in the immutable audit trail.
+4. **Safety Invariants**:
    - Never moves real money or initiates wire payments.
    - Enforces strict positive amount and liquid balance limits.
    - Treats transaction descriptions and user inputs as untrusted data (sanitizes potential script injection).
@@ -139,9 +145,9 @@ vercel --prod
 ## Local Verification Status & Remaining Checks
 
 ### Tests Executed & Passed:
-- `npm test`: **8/8 tests passed** (Workflow lifecycle, positive amount guardrails, liquid balance constraints, category distinction, script injection sanitization, simulated execution accuracy, deterministic demo mode, failure rollback).
+- `npm test`: **11/11 tests passed** (Workflow lifecycle, positive amount guardrails, liquid balance constraints, category distinction, script injection sanitization, simulated execution accuracy, deterministic demo mode, failure rollback, daily burn rate & survival days calculations, survival mode plan generation, and safe survival budget execution).
 - `npm run lint`: **0 errors** (`tsc --noEmit` clean).
-- `npm run build`: **Built successfully** in 1.08s into `/dist`.
+- `npm run build`: **Built successfully** in 821ms into `/dist`.
 
 ### Exact Checks Remaining for You to Run Locally:
 1. **Live OpenRouter API Key Test (Optional)**: If you possess an OpenRouter API key, add it to your local `.env` as `OPENROUTER_API_KEY="..."` and prompt the Copilot to verify responses directly from OpenRouter's free router. (Demo mode works completely without it).

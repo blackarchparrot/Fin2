@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { INITIAL_SYNTHETIC_PROFILES } from './data/mockData';
 import {
   ActionPayload,
-  ActionType,
   AgentExecutionLog,
   FinancialInsight,
   FinancialProfile,
@@ -12,6 +11,7 @@ import {
   TransactionCategory,
 } from './types/finance';
 import {
+  calculateSurvivalMetrics,
   executeSimulatedAction,
   validateAction,
 } from './services/agentEngine';
@@ -23,6 +23,7 @@ import {
 import { Navbar } from './components/Navbar';
 import { DemoDisclaimerBanner } from './components/DemoDisclaimerBanner';
 import { DashboardOverview } from './components/DashboardOverview';
+import { SurvivalRunwayCalculator } from './components/SurvivalRunwayCalculator';
 import { CategoryBudgets } from './components/CategoryBudgets';
 import { SavingsGoals } from './components/SavingsGoals';
 import { TransactionList } from './components/TransactionList';
@@ -33,9 +34,37 @@ import { AgentAuditLog } from './components/AgentAuditLog';
 import userAvatarImg from './assets/images/avatar_finpilot_user_1792222787388.jpg';
 
 export default function App() {
+  // Theme state: dark | light, persisted in localStorage
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('finpilot-theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+      return 'dark'; // default to dark
+    }
+    return 'dark';
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+      root.classList.remove('light');
+    } else {
+      root.classList.remove('dark');
+      root.classList.add('light');
+    }
+    localStorage.setItem('finpilot-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   const [profileKey, setProfileKey] = useState<string>('founder');
   const [profile, setProfile] = useState<FinancialProfile>(() => {
-    return JSON.parse(JSON.stringify(INITIAL_SYNTHETIC_PROFILES.founder));
+    const initial = JSON.parse(JSON.stringify(INITIAL_SYNTHETIC_PROFILES.founder));
+    initial.survivalMetrics = calculateSurvivalMetrics(initial);
+    return initial;
   });
 
   const [activeTab, setActiveTab] = useState<'overview' | 'actions' | 'budgets' | 'goals' | 'audit'>('overview');
@@ -78,7 +107,7 @@ export default function App() {
       id: 'log-seed-1',
       timestamp: new Date(Date.now() - 3600000).toISOString(),
       userPrompt: 'System initialization & synthetic profile baseline load',
-      planSummary: 'Loaded synthetic portfolio for Alex Mercer (Founder). Baseline health metrics verified.',
+      planSummary: 'Loaded synthetic portfolio for Alex Mercer (Founder). Baseline survival longevity calibrated at 163 days.',
       verificationOutcome: 'VERIFIED_SUCCESS',
       notes: 'Initial ledger state calibrated. Ready for human-in-the-loop autonomous suggestions.',
     },
@@ -97,14 +126,18 @@ export default function App() {
   const handleSwitchProfile = (key: string) => {
     if (INITIAL_SYNTHETIC_PROFILES[key]) {
       setProfileKey(key);
-      setProfile(JSON.parse(JSON.stringify(INITIAL_SYNTHETIC_PROFILES[key])));
+      const newProf = JSON.parse(JSON.stringify(INITIAL_SYNTHETIC_PROFILES[key]));
+      newProf.survivalMetrics = calculateSurvivalMetrics(newProf);
+      setProfile(newProf);
     }
   };
 
   // Reset data to defaults
   const handleResetData = () => {
     const template = INITIAL_SYNTHETIC_PROFILES[profileKey] || INITIAL_SYNTHETIC_PROFILES.founder;
-    setProfile(JSON.parse(JSON.stringify(template)));
+    const fresh = JSON.parse(JSON.stringify(template));
+    fresh.survivalMetrics = calculateSurvivalMetrics(fresh);
+    setProfile(fresh);
   };
 
   // Open copilot with specific prompt
@@ -209,6 +242,7 @@ export default function App() {
       if (b) {
         b.allocated = newAllocated;
       }
+      updated.survivalMetrics = calculateSurvivalMetrics(updated);
       return { ...updated };
     });
   };
@@ -232,6 +266,7 @@ export default function App() {
         updated.totalBalance += tx.amount;
       }
 
+      updated.survivalMetrics = calculateSurvivalMetrics(updated);
       return updated;
     });
   };
@@ -260,14 +295,14 @@ export default function App() {
   const pendingCount = proposedActions.filter((a) => a.status === 'PROPOSED').length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 flex flex-col transition-colors duration-200">
       {/* Top Disclaimer Banner */}
       <DemoDisclaimerBanner
         isLiveOpenRouter={Boolean(serverHealth?.hasServerApiKey)}
         modelName={serverHealth?.configuredModel || 'openrouter/free'}
       />
 
-      {/* Top Bar Navigation */}
+      {/* Top Bar Navigation with Sun/Moon theme toggle */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -277,23 +312,25 @@ export default function App() {
         onOpenCopilot={() => handleOpenCopilot()}
         onResetData={handleResetData}
         avatarSrc={userAvatarImg}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
 
       {/* Main Viewport Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {/* Profile Context Ribbon */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-800 text-xs text-slate-400">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
           <div>
-            <span className="text-white font-medium">{profile.name}</span>
+            <span className="text-slate-900 dark:text-white font-medium">{profile.name}</span>
             <span className="mx-2" aria-hidden="true">·</span>
             <span>Currency: {profile.currency}</span>
             <span className="mx-2" aria-hidden="true">·</span>
-            <span className="text-emerald-400">Simulated Safe Environment</span>
+            <span className="text-emerald-600 dark:text-emerald-400 font-medium">Simulated Safe Environment</span>
           </div>
 
           <div className="flex items-center gap-2">
             <span>Inference Mode:</span>
-            <span className="text-slate-200 font-mono">
+            <span className="text-slate-700 dark:text-slate-200 font-mono">
               {serverHealth?.hasServerApiKey
                 ? `OpenRouter Free (${serverHealth.configuredModel})`
                 : 'Deterministic Copilot (Zero-Cost Safe Demo)'}
@@ -307,6 +344,12 @@ export default function App() {
             <DashboardOverview
               profile={profile}
               onQuickCopilotPrompt={(prompt) => handleOpenCopilot(prompt)}
+            />
+
+            {/* Survival & Cash Runway Calculator Engine */}
+            <SurvivalRunwayCalculator
+              profile={profile}
+              onTriggerSurvivalAction={(prompt) => handleOpenCopilot(prompt)}
             />
 
             <SpendingInsights
@@ -405,10 +448,10 @@ export default function App() {
       />
 
       {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950 py-6 text-xs text-slate-500">
+      <footer className="border-t border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-950 py-6 text-xs text-slate-500 transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-400">FinPilot AI</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-400">FinPilot AI</span>
             <span>·</span>
             <span>FinTech Competition Edition</span>
             <span>·</span>

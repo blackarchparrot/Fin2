@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { INITIAL_SYNTHETIC_PROFILES } from '../src/data/mockData';
 import {
+  calculateSurvivalMetrics,
   executeSimulatedAction,
   generateDeterministicPlan,
   generatePlanWorkflow,
@@ -136,4 +137,56 @@ describe('FinPilot AI - Safe Agent Guardrails & Invariants', () => {
     expect(result.success).toBe(false);
     expect(result.message).toContain('Safety Invariant Violation');
   });
+
+  it('accurately calculates daily burn rate and zero-income survival days', () => {
+    const metrics = calculateSurvivalMetrics(baseProfile);
+    expect(metrics.dailyBurnActual).toBeGreaterThan(0);
+    expect(metrics.survivalDaysActual).toBeGreaterThan(0);
+    // Survival days = totalBalance / dailyBurnActual
+    const expectedDays = Math.floor(baseProfile.totalBalance / metrics.dailyBurnActual);
+    expect(metrics.survivalDaysActual).toBe(expectedDays);
+    expect(metrics.survivalDaysEssentialOnly).toBeGreaterThanOrEqual(metrics.survivalDaysActual);
+  });
+
+  it('generates a survival runway extension plan when prompted for survival or burn', () => {
+    const planResult = generateDeterministicPlan(
+      baseProfile,
+      'How many days can I survive if I lose my job? Activate survival mode.'
+    );
+    expect(planResult.proposedAction.type).toBe('ACTIVATE_SURVIVAL_BUDGET');
+    expect(planResult.proposedAction.payload.projectedDaysGained).toBeGreaterThan(0);
+    expect(planResult.proposedAction.allRulesPassed).toBe(true);
+    expect(planResult.rationale).toContain('survival');
+  });
+
+  it('safely applies ACTIVATE_SURVIVAL_BUDGET and expands survival runway', () => {
+    const initialMetrics = calculateSurvivalMetrics(baseProfile);
+
+    const proposed: ProposedAction = {
+      id: 'test-survival-act',
+      timestamp: new Date().toISOString(),
+      type: 'ACTIVATE_SURVIVAL_BUDGET',
+      title: 'Emergency Survival Trim',
+      description: 'Trim discretionary budgets by $300/mo',
+      expectedEffect: 'Extends survival runway by +20 days',
+      payload: {
+        projectedDaysGained: 20,
+        trimmedCategories: [
+          { category: 'Entertainment', previousAmount: 350, newAmount: 175 },
+          { category: 'Software & Subscriptions', previousAmount: 380, newAmount: 250 },
+        ],
+      },
+      validationRules: [],
+      allRulesPassed: true,
+      riskLevel: 'LOW',
+      status: 'PROPOSED',
+    };
+
+    const res = executeSimulatedAction(baseProfile, proposed);
+    expect(res.success).toBe(true);
+    expect(res.updatedProfile.monthlyExpense).toBeLessThan(baseProfile.monthlyExpense);
+    const updatedMetrics = calculateSurvivalMetrics(res.updatedProfile);
+    expect(updatedMetrics.survivalDaysActual).toBeGreaterThan(initialMetrics.survivalDaysActual);
+  });
 });
+

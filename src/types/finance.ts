@@ -41,13 +41,31 @@ export interface SavingsGoal {
   priority: 'high' | 'medium' | 'low';
 }
 
+export interface SurvivalMetrics {
+  dailyBurnActual: number;
+  dailyBurnBudget: number;
+  dailyEssentialBurn: number;
+  dailyDiscretionaryBurn: number;
+  survivalDaysActual: number;
+  survivalDaysBudget: number;
+  survivalDaysEssentialOnly: number;
+  essentialMonthlyExpense: number;
+  discretionaryMonthlyExpense: number;
+  survivalStatus: 'CRITICAL' | 'CAUTION' | 'STABLE' | 'SECURE';
+  sustainableWithIncome: boolean;
+  netMonthlySurplus: number;
+}
+
 export type ActionType =
   | 'REALLOCATE_BUDGET'
   | 'ALLOCATE_SAVINGS'
   | 'RECATEGORIZE_TRANSACTION'
   | 'CREATE_SAVINGS_GOAL'
   | 'SET_SPENDING_CEILING'
-  | 'CANCEL_SUBSCRIPTION_ALERT';
+  | 'CANCEL_SUBSCRIPTION_ALERT'
+  | 'ACTIVATE_SURVIVAL_BUDGET'
+  | 'EXTEND_RUNWAY_PLAN'
+  | 'OPTIMIZE_DAILY_BURN';
 
 export interface ActionPayload {
   sourceCategory?: TransactionCategory;
@@ -59,6 +77,13 @@ export interface ActionPayload {
   newBudget?: number;
   newCategory?: TransactionCategory;
   reason?: string;
+  targetSurvivalDays?: number;
+  projectedDaysGained?: number;
+  trimmedCategories?: {
+    category: TransactionCategory;
+    previousAmount: number;
+    newAmount: number;
+  }[];
 }
 
 export interface ValidationRuleCheck {
@@ -124,4 +149,5 @@ export interface FinancialProfile {
   budgets: CategoryBudget[];
   savingsGoals: SavingsGoal[];
   insights: FinancialInsight[];
+  survivalMetrics?: SurvivalMetrics;
 }
